@@ -20,14 +20,14 @@ run getHankel.m
 
 x = zeros(2,1); % state vector
 Ts = 0.1; % sampling period [s]
-Tsim = 4; % simulation period [s]
+Tsim = 50; % simulation period [s]
 t = 0:Ts:Tsim;
 
 nx = 2; % number of states
 nu = 1; % number of control inputs
 x0_t = [0; 0]; % initial state
 y_init = zeros(p*n, 1); 
-y_target = repmat([10; 0], n, 1); 
+y_target = repmat([0; 10], n, 1); 
 u_init = zeros(m*n, 1);
 u_target = zeros(m*n, 1); 
 
@@ -38,14 +38,14 @@ u_target = zeros(m*n, 1);
 % M_ab = zeros(nx*p, nu*p);
 % M_ak = zeros(nx*p, nx);
 s = 2; 
-qy_weight = 1e1;
-qu_weight = 1;
-qa_weight = 5e0; 
-qs_weight = 1e4; 
+qy_weight = 1;
+qu_weight = 10;
+qa_weight = 0; 
+qs_weight = 50; 
 Qy = diag([qy_weight qy_weight]);
 Qu = diag(qu_weight);
 Qa = diag(qa_weight); 
-Qs = diag([10*qs_weight qs_weight]); 
+Qs = diag([]); 
 My = kron(eye(L+n), Qy);
 Mu = kron(eye(L+n), Qu);
 Ma = kron(eye(N-L+1), Qa); 
@@ -78,7 +78,7 @@ y_init = getTrajectory(dynamics, measurement, u_init, x0_t);
 
 for i = 1:length(t)-1
     b_eq = [zeros(nm, 1); zeros(np, 1); u_init(:); y_init(:); u_target; y_target];
-    z_target = [repmat(0, L+n, 1); repmat([10; 0], L+n, 1); zeros(na, 1); zeros(ns, 1)];
+    z_target = [repmat(0, L+n, 1); repmat([0; 10], L+n, 1); zeros(na, 1); zeros(ns, 1)];
     f = (-z_target'*H)'; 
     options = optimoptions('quadprog','Algorithm','active-set');
     z_opt = quadprog(H, f, [], [], A_eq, b_eq, [], [], zeros(q, 1), options);
@@ -106,6 +106,7 @@ plot(t, mpc_states(1,:), 'LineWidth', 2, 'Color', 'g');
 title('Vehicle Control: Position'); 
 xlabel('Time [s]')
 ylabel('Position [m]')
+legend('Actual', 'Reference', 'Location', 'northwest')
 grid on 
 grid minor
 subplot(1, 3, 3)
