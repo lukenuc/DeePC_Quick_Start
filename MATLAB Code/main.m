@@ -20,27 +20,21 @@ run getHankel.m
 
 x = zeros(2,1); % state vector
 Ts = 0.1; % sampling period [s]
-Tsim = 4; % simulation period [s]
+Tsim = 10; % simulation period [s]
 t = 0:Ts:Tsim;
 
 nx = 2; % number of states
 nu = 1; % number of control inputs
-x0_t = [0; 0]; % initial state
+x0_t = [8; 0]; % initial state
 y_init = zeros(p*n, 1); 
 y_target = repmat([10; 0], n, 1); 
 u_init = zeros(m*n, 1);
 u_target = zeros(m*n, 1); 
 
-% xmin = repmat([-100; -30], p, 1);
-% xmax = repmat([100; 22], p, 1);
-% umin = repmat([-30], p, 1);
-% umax = repmat([30], p, 1);
-% M_ab = zeros(nx*p, nu*p);
-% M_ak = zeros(nx*p, nx);
 s = 2; 
-qy_weight = 1e1;
-qu_weight = 1;
-qa_weight = 5e0; 
+qy_weight = 2e1;
+qu_weight = 2e0;
+qa_weight = 1e-0; 
 qs_weight = 1e4; 
 Qy = diag([qy_weight qy_weight]);
 Qu = diag(qu_weight);
@@ -62,40 +56,77 @@ Kp_right = [zeros(p*n, p*L) eye(p*n)];
 
 t_bez = linspace(0, 1, Tsim/Ts);
 t_bez = [t_bez repmat(t_bez(end), 1, p)]; % extend ending for prediction horizon
-bezier_ref = 1 + kron((1-t_bez).^3, 0) + kron(3*(1-t_bez).^2.*t_bez, -1) + kron(3*(1-t_bez).*t_bez.^2, 11) + kron(t_bez.^3, 10); 
+bezier_ref = 1 + kron((1-t_bez).^3, 8) + kron(3*(1-t_bez).^2.*t_bez, 7.5) + kron(3*(1-t_bez).*t_bez.^2, 10.5) + kron(t_bez.^3, 10); 
+% 
+% A_eq = [eye(nm) zeros(nm, np) -Hu zeros(nm, ns); ...
+%         zeros(np,nm) eye(np) -Hy eye(ns); ...
+%         Km_left zeros(m*n, q-nm);
+%         zeros(p*n, nm) Kp_left zeros(p*n, na+ns);
+%         Km_right zeros(m*n, q-nm);
+%         zeros(p*n, nm) Kp_right zeros(p*n, na + ns)]; 
+% u_mpc = zeros(m, length(t)); 
+% mpc_states = zeros(p, length(t));
+% mpc_states(:,1) = x0_t;
+% u_init = bezier_ref(1:n);
+% y_init = getTrajectory(dynamics, measurement, u_init, x0_t);
 
-A_eq = [eye(nm) zeros(nm, np) -Hu zeros(nm, ns); ...
-        zeros(np,nm) eye(np) -Hy eye(ns); ...
-        Km_left zeros(m*n, q-nm);
-        zeros(p*n, nm) Kp_left zeros(p*n, na+ns);
-        Km_right zeros(m*n, q-nm);
-        zeros(p*n, nm) Kp_right zeros(p*n, na + ns)]; 
-u_mpc = zeros(m, length(t)); 
-mpc_states = zeros(p, length(t));
-mpc_states(:,1) = x0_t;
+%% Sparse QP Implementation
+% for i = 1:length(t)-1
+%     b_eq = [zeros(nm, 1); zeros(np, 1); u_init(:); y_init(:); u_target; y_target];
+%     z_target = [repmat(0, L+n, 1); repmat([10; 0], L+n, 1); zeros(na, 1); zeros(ns, 1)];
+%     f = (-z_target'*H)'; 
+%     options = optimoptions('quadprog','Algorithm','active-set');
+%     z_opt = quadprog(H, f, [], [], A_eq, b_eq, [], [], zeros(q, 1), options);
+%     u = z_opt(n+1); 
+%     x0_t = Ad*x0_t + Bd*u; % update state with optimal control
+%     mpc_states(:, i+1) = x0_t;
+%     u_mpc(:, i) = u; 
+%     u_init = [u_init(2:end) u];
+%     y_init = [y_init(:,2:end) C*x0_t];
+% end
+
+%% Dense Control Law
+
 u_init = bezier_ref(1:n);
 y_init = getTrajectory(dynamics, measurement, u_init, x0_t);
+u_mpc = zeros(m, length(t)); 
+mpc_states = zeros(n, length(t));
+mpc_states(:,1) = x0_t;
 
-for i = 1:length(t)-1
-    b_eq = [zeros(nm, 1); zeros(np, 1); u_init(:); y_init(:); u_target; y_target];
-    z_target = [repmat(0, L+n, 1); repmat([10; 0], L+n, 1); zeros(na, 1); zeros(ns, 1)];
-    f = (-z_target'*H)'; 
-    options = optimoptions('quadprog','Algorithm','active-set');
-    z_opt = quadprog(H, f, [], [], A_eq, b_eq, [], [], zeros(q, 1), options);
-    u = z_opt(n+1); 
+Hu_n = Hu(1:n*m, :);
+Hy_n = Hy(1:n*p, :);
+H_n  = [Hu_n; Hy_n]; 
+Hu_L = Hu(n*m+1:end, :); 
+Hy_L = Hy(n*p+1:end, :); 
+H_L  = [Hu_L; Hy_L]; 
+Mu_L = Mu(n*m+1:(L+n)*m, n*m+1:(L+n)*m); 
+My_L = My(n*p+1:(L+n)*p, n*p+1:(L+n)*p);
+M_L  = blkdiag(Mu_L, My_L); 
+
+H = H_L'*M_L*H_L + Ma; 
+Hinv = inv(H); 
+u_L = repmat(0, L, 1); y_L = repmat(10, L, 1);
+f = -Hu_L'*Mu_L*u_L - Hy_L'*My_L*y_L; 
+alpha_unc = -H\f; 
+g = alpha_unc - Hinv*H_n'*inv(H_n*Hinv*H_n')*H_n*alpha_unc; 
+gu = [zeros(m, m*n) eye(m, m) zeros(m, m*(L-1))]*Hu*g;
+Pu = [zeros(m, m*n) eye(m, m) zeros(m, m*(L-1))]*Hu*Hinv*H_n'*inv(H_n*Hinv*H_n');
+
+for i = 1:length(t)-1 
+    z = [u_init(:); y_init(:)]; 
+    u = gu + Pu*z; 
     x0_t = Ad*x0_t + Bd*u; % update state with optimal control
     mpc_states(:, i+1) = x0_t;
     u_mpc(:, i) = u; 
     u_init = [u_init(2:end) u];
-    y_init = [y_init(:,2:end) C*x0_t];
+    y_init = [y_init(2:end) C*x0_t];
 end
-
 
 %% plot results 
 
 figure('Position', [100 100 1200 400]); 
 subplot(1, 3, 1)
-stairs(t, u_mpc, 'LineWidth', 2); 
+stairs(t(1:length(u_mpc)), u_mpc, 'LineWidth', 2); 
 title('Vehicle Control: MPC Input'); 
 xlabel('Time [s]')
 ylabel('Applied Acceleration [m/s/s]')
